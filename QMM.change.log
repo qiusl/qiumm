@@ -1,0 +1,13 @@
+Version 1.0 (2013.11.18):
+  - first version
+Version 1.0.1 (2013.11.26):
+  - 1. modify leak working mode, make it like link
+    2. add option: report_thread_running, if true, it will report thread
+       when application exit
+    3. add callback: on_thread_abnormal_proc
+       The callback when the thread execution after the withdrawal, collapse,
+       for thread running condition monitoring
+    4. modify memory_free by other thread, it was report leak
+       add FLAG: FLAG_WAITFORFREE, for that.
+    5. add share MM, code from FastMM4
+    6. fixed BUG: large_realloc will av.
