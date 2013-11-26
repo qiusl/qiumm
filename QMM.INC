@@ -1,7 +1,7 @@
 //
 // use fastcode for function fillchar & move
 //
-{$define fastcode}
+{.$define fastcode}
 
 //
 // use of API.Windows::tlsAlloc/tslSetValue/tlsGetValue
@@ -25,6 +25,7 @@
   {$ifdef release}
     {$define has_inline}
   {$endif}
+  {$define has_thread_exit}
 {$ifend}
 
 {$ifdef release}
