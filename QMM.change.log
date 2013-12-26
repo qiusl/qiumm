@@ -1,5 +1,10 @@
-Version 1.0 (2013.11.18):
-  - first version
+Version 1.1.1 (2013.12.26):
+  - redesign the data structure. because, it does not pass the fastcode mm benchmark test
+    Add: share mm on DLL <-> APP
+    ADD: The new public interface: qmm_memory_alloc/realloc/free, let it not directly access MM.
+    Del: internal "REG LEAK"
+    Mod: large_alloc/realloc/free
+    Mod: BUG: multithread conflict, use criticalsection to replace API: interlockedXX
 Version 1.0.1 (2013.11.26):
   - 1. modify leak working mode, make it like link
     2. add option: report_thread_running, if true, it will report thread
@@ -11,3 +16,5 @@ Version 1.0.1 (2013.11.26):
        add FLAG: FLAG_WAITFORFREE, for that.
     5. add share MM, code from FastMM4
     6. fixed BUG: large_realloc will av.
+Version 1.0 (2013.11.18):
+  - first version

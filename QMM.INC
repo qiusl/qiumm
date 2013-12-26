@@ -1,24 +1,26 @@
 //
 // use fastcode for function fillchar & move
-//
-{.$define fastcode}
+// for D2007down
+{$if CompilerVersion < 17}
+  {.$define fastcode}
+{$ifend}
 
-//
-// use of API.Windows::tlsAlloc/tslSetValue/tlsGetValue
-// else: threadvar
-//
-// threadvar is 5-10% faster
-//
-{.$define tls_mode}
+// for debug mm
+{.$define qmm_debug}
 
-{$if CompilerVersion <= 15.0}
+//{$if CompilerVersion <= 20.0}
+{$if not defined(release) and not defined(debug)}
   {$define release}
-  {$define debug}
 {$ifend}
 
-{$if defined(release) and defined(debug)}
-  {$undef debug}
-{$ifend}
+{$ifdef release}
+  {$ifdef qmm_debug}
+    {$undef qmm_debug}
+  {$endif}
+  {$ifdef debug}
+    {$undef debug}
+  {$endif}
+{$endif}
 
 {$if CompilerVersion >= 17.0}
   {$define has_mm_ex}
