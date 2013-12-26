@@ -1,0 +1,32 @@
+Frequently Asked Questions
+------------------------------------
+
+explain the name:
+------------------------------------
+Serial MM: FastMM, TopMM
+  Serial MM, is based on multithread, in the multi thread memory operation, 
+  all the operations are performed in synchronous mode, i call it serial MM.
+
+Parallel MM: ScaleMM, QMM, SAPMM
+  In parallel, multithreaded memory operation, is assigned a memory management mode, 
+  so, A and B thread at the same time distribution, will not interfere with each other.
+  serial MM and parallel MM biggest difference lies in the. 
+  That is, when different MM in the same test content, efficiency and memory usage for different reasons there will be.
+
+------------------------------------
+
+Q: which MM is the most stable, the most appropriate production and development?
+
+A: (this is a personal opinion, for reference only)
+  I present test case, use the FastMM+multithread pool mode of production development.
+
+  On the server side aspects of the procedure can be considered: ScaleMM2.0, or SAPMM.
+
+  TOPMM, indeed, Fastcode MM benchmark process, it is the fastest, but when reading code is that it is almost FastMM,
+  and is the serial MM, and less than FastMM on DEBUG, so...
+
+  QMM is the initial development is from 2013-9, from reading the ScaleMM2 began to do, 
+  just interested, i wrote that.
+  NOW it passed the fastcode mm benchmark test.
+------------------------------------
+
