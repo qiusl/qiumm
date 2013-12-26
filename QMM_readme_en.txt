@@ -1,5 +1,5 @@
 
-QIU Memory Manager 1.0 for Delphi
+QIU Memory Manager 1.11 for Delphi
 
 Description:
 	a simple and compact MM for Delphi/XE
@@ -13,10 +13,8 @@ Usage:
    project's .dpr file.
 
 Other:
- - important: test only by D7,D2010
- - without professional software testing, please use caution
+ - important: test only by D7,D2010 (WIN32, NOT WIN64)
  - support multithread, allocate memory for each thread manager.
- - don't support between DLL and APP shared memory device (next version will...)
  -
 
 Support:
@@ -39,8 +37,6 @@ QMM.pas - The replacement memory manager (to speed up your applications)
 QMM Optional Features (QMM.Inc):
 --------------------------------
 fastcode - The use of fastcode code, instead of the system function: fillchar and move.
-tls_mode - Use the API: tlsAlloc and related function, processing thread local variables
-					 If not defined, then use the keyword "threadvar" processing
 
 debug release  - with application config
 
