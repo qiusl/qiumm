@@ -1,6 +1,9 @@
 Frequently Asked Questions
 ------------------------------------
+QMM current version: BETA v1.12
+I hope more people can see, and suggest a or BUG, thank you.
 
+------------------------------------
 explain the name:
 ------------------------------------
 Serial MM: FastMM, TopMM
