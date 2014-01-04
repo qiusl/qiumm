@@ -1,10 +1,3 @@
-//
-// use fastcode for function fillchar & move
-// for D2007down
-{$if CompilerVersion < 17}
-  {.$define fastcode}
-{$ifend}
-
 // for debug mm
 {.$define qmm_debug}
 
@@ -29,6 +22,7 @@
   {$endif}
   {$define has_thread_exit}
 {$ifend}
+
 
 {$ifdef release}
   {$optimization on}

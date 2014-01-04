@@ -1,0 +1,57 @@
+QiuMM function and work flow
+--------------------------------------------------------------------
+WORK FLOW:
+
+  1. through threadvar (NOT TLS) of memory operations for each thread is assigned a manager(TThreadMemory).
+
+  2. TMemManager would be manager TThreadMemory, when thread create or free. 
+     IMPORTANT:
+       Dependent on the user does not use the API: CreateThread and BeginThread,
+       If the user is using them, but without calling System.EndThread, 
+       then QMM will be unable to delete the memory block has been allocated thread, 
+       it will make the application increasing. and then...
+     when a thread create and the memory allocation, TMemManager will get the allc
+  3. TThreadMemory will allocation, will be divided into three parts: 
+     a: small:  <2048 is small, <256  is mini
+        They will serve as a fixed byte length distribution.
+        For a large, for multiple small for assignment, if need small, 
+        retrieved from the bulk of if free_index>0: or (used_count < alloc_count), then OK
+     b: medium
+       all the source of not more than SIZE_BLOCK of memory.
+       it will use double link make it continuous.
+     c: large
+       if size > SIZE_BLOCK, and the memory is temporary.
+  
+
+WORK FLOW end.
+--------------------------------------------------------------------
+FUNCTION:
+
+  1. support D7-XE(win32), win64 there is no comprehensive test 
+
+  2. support report memory leak, example:
+    t := TMyObject.Create;
+    t.v := $12345678;
+
+   the memory.leak.log will create, and like log:
+...
+Class Name: TMyObject, instance address: $0053D448, instance size: 12, mem size: 12
+68 8D 4D 00 78 56 34 12 00 00 00 00 
+...
+   
+   NOTE: must be ReportMemoryLeaksOnShutdown = true on delphi2006 or later,
+         if delphi2005 or earlier, you can do this: QMM.ReportMemoryLeaksOnShutdown = true, :)
+
+
+  3. you can pass the callback variables: "on_memory_error_proc" (for DEBUG), 
+     assignment, for the detection of a block of memory is operating out of bounds. 
+     Cross the border, will break, and then, you can continue to follow.
+
+  NOTE: operating cross-border if you skip the check part, are unable to check out whether
+    out of bounds, so, this is just a simple function, is not comprehensive.
+
+  4. other. 
+    a. function: memory_status, it is some statistical information.
+    b. callback: on_notify_get_proc/realloc_proc/free_proc, it is notify memory operation for DEBUG.
+ 
+FUNCTION end.

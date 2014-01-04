@@ -1,8 +1,8 @@
 
-QIU Memory Manager 1.11 for Delphi
+QIU Memory Manager 1.12 for Delphi
 
 Description:
-	a simple and compact MM for Delphi/XE
+  a simple and compact MM for Delphi/XE
 
 Homepage:
   https://code.google.com/p/qiumm/
@@ -13,9 +13,9 @@ Usage:
    project's .dpr file.
 
 Other:
- - important: test only by D7,D2010 (WIN32, NOT WIN64)
+ - important: test only by D7,D2010,XE4 (WIN32)
  - support multithread, allocate memory for each thread manager.
- -
+ - more, plz see qmm.change.log
 
 Support:
  If you have trouble using QMM, you are welcome to drop me an e-mail at the

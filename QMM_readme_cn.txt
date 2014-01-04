@@ -1,5 +1,5 @@
 ﻿
-QIU Memory Manager 1.11 for Delphi
+QIU Memory Manager 1.12 for Delphi
 简称：QMM
 
 描述:
@@ -13,9 +13,9 @@ QIU Memory Manager 1.11 for Delphi
  - 如同其它MM，将它放置于dpr最上面即可使用
 
 其它注意事项:
- - 注意：QMM仅在D7及D2010(WIN32)测试通过，其它Delphi版本未经测试
+ - 注意：QMM在D7+D2010+XE4(WIN32)测试通过，其它Delphi版本请自行测试，WIN64测试不全面，可能会有问题
  - 支持多线程，为每线程分配一线程管理器，所以，它是并行分配内存的。
- -
+ - 更多，请看qmm.change.log
 
 技术支持:
   如在使用QMM遇到问题，欢迎来信，如果有BUG或更好的建议更是欢迎:)

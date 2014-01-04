@@ -1,7 +1,7 @@
 
 { ***********************************************************************
 
-QIU Memory Manager 1.11 for Delphi
+QIU Memory Manager 1.12 for Delphi
 
 Description:
 	a simple and compact MM for Delphi/XE
@@ -32,21 +32,26 @@ License:
 
 Change log:
   plz see: QMM.change.log
-  last modified: 2013.11.26 by qiusonglin
+  last modified: 2014.01.05 by qiusonglin
 
  *********************************************************************** }
 unit QMM;
 
 interface
 
-uses Windows;
-
-const
-  QMM_VERSION = 1.11;
-
 {$i QMM.inc}
 
+{$if CompilerVersion < 17.0}
+uses Windows;
+{$else}
+  {$i functions.inc}
+{$ifend}
+
+const
+  QMM_VERSION = 1.12; 
+
 type
+  PSIZE = ^MSIZE;
 {$if CompilerVersion < 22}
   MSIZE = Integer;
 {$else}
@@ -117,9 +122,9 @@ var
 
 implementation
 
-{$ifdef fastcode}
-uses FastcodeFillCharUnit, FastMove;
-{$endif}
+{$if CompilerVersion < 17.0}
+  {$i D2007_move.inc}
+{$ifend}
 
 type
   PSpinLock = ^TSpinLock;
@@ -194,15 +199,71 @@ begin
   end;
 end;
 
+// copy from fastmm4
+procedure move32(const ASource; var ADest; ACount: MSIZE);
+asm
+{$ifdef win32}
+  fild qword ptr [eax]
+  fild qword ptr [eax + 8]
+  fild qword ptr [eax + 16]
+  fild qword ptr [eax + 24]
+  fistp qword ptr [edx + 24]
+  fistp qword ptr [edx + 16]
+  fistp qword ptr [edx + 8]
+  fistp qword ptr [edx]
+{$else}
+.noframe
+  movdqa xmm0, [rcx]
+  movdqa xmm1, [rcx + 16]
+  movdqa [rdx], xmm0
+  movdqa [rdx + 16], xmm1
+{$endif}
+end;
+
+// copy from fastmm4
+procedure move64(const ASource; var ADest; ACount: MSIZE);
+asm
+{$ifdef win32}
+  fild qword ptr [eax]
+  fild qword ptr [eax + 8]
+  fild qword ptr [eax + 16]
+  fild qword ptr [eax + 24]
+  fild qword ptr [eax + 32]
+  fild qword ptr [eax + 40]
+  fild qword ptr [eax + 48]
+  fild qword ptr [eax + 56]
+  fistp qword ptr [edx + 56]
+  fistp qword ptr [edx + 48]
+  fistp qword ptr [edx + 40]
+  fistp qword ptr [edx + 32]
+  fistp qword ptr [edx + 24]
+  fistp qword ptr [edx + 16]
+  fistp qword ptr [edx + 8]
+  fistp qword ptr [edx]
+{$else}
+.noframe
+  movdqa xmm0, [rcx]
+  movdqa xmm1, [rcx + 16]
+  movdqa xmm2, [rcx + 32]
+  movdqa xmm3, [rcx + 48]
+  movdqa [rdx], xmm0
+  movdqa [rdx + 16], xmm1
+  movdqa [rdx + 32], xmm2
+  movdqa [rdx + 48], xmm3
+{$endif}
+end;
+
 {$ifopt c+}
 function assert(condition: Boolean; step: Integer = 0): Boolean;
 begin
   result := condition;
   if not result then
   begin
-    asm
-      int 3;   // breakpoint
-    end;
+  {$ifdef win32}
+    asm int 3 end;
+  {$else}
+    DebugBreak;
+  {$endif}
     sleep(step);
   end;
 end;
@@ -241,28 +302,20 @@ const
   BIT_STEP_MINI       = 5;
   BIT_STEP_SMALL      = 7;
 
-  //BIT_STEP_MEDIUM     = 11;
   SIZE_BLOCK          = 1 * 1024 * 1024;
   MAX_THEAD_BLOCK     = 4;
   MAX_MANAGER_BLOCK   = 4;
 
-  SIZE_HASH_LEAK      = 4096;
-
   BIT_LINK_MEDIUM     = 13;
   MAX_LINK_MEDIUM     = 16;
 
-  BIT_LINK_LARGE      = 16;
-  MAX_LINK_LARGE      = 32;
-
 const
-  SIZE_HASH_THREAD_MGR    = $FF + 1;
   PER_THREAD_BUFFER_COUNT = 64;
 
 type
   PMem = ^TMem;
   PMemBlock = ^TMemBlock;
   PMemItem = ^TMemItem;
-  //PMemItem = PMem;
   PPMemItems = ^PMemItems;
   PMemItems = ^TMemItems;
   PMemItemsBlock = ^TMemItemsBlock;
@@ -290,6 +343,7 @@ type
     item_flag_used: MSIZE;
     first_buffer: PMemItemBuffer;
     items_buffer: PMemItemBuffer;
+    move_upsize: procedure(const source; var dest; count: MSIZE);
   end;
 
   TMemItemsBlock = record
@@ -334,6 +388,8 @@ type
   TMemLink = record
     mem: TMem;
     link_next, link_prev: PMemLink;
+    link_index: Integer;
+    link_size: PSIZE;
   end;
 
   PMemLinkArray = ^TMemLinkArray;
@@ -357,7 +413,7 @@ type
   private
     procedure add_link(mem: PMem);
     {$ifdef has_inline} inline; {$endif}
-    function del_link(mem: PMem; mem_size: MSIZE): Boolean;
+    procedure del_link(mem: PMem; mem_size: MSIZE);
     {$ifdef has_inline} inline; {$endif}
   private
     mini_block: PMemItemsBlock;
@@ -368,12 +424,13 @@ type
     function mem_item_free(p: PMem): Integer;
     {$ifdef has_inline} inline; {$endif}
     procedure mem_item_free_buffer(buffer: PMemItemBuffer);
+    {$ifdef has_inline} inline; {$endif}
   private
     owner_block: TMemBlock;
     medium_block: PMemBlock;
-    medium_link_size: Int64;
-    medium_link_count: Cardinal;
+    medium_total_link_size: MSIZE;
     medium_links: array [0..MAX_LINK_MEDIUM - 1] of PMemLink;
+    medium_link_sizes: array [0..MAX_LINK_MEDIUM - 1] of MSIZE;
     function medium_mem_get_with_leak(var size: MSIZE): Pointer;
     {$ifdef has_inline} inline; {$endif}
     procedure medium_mem_free_with_leak(p: Pointer);
@@ -402,6 +459,7 @@ type
     {$ifdef has_inline} inline; {$endif}
   public
     thread_id: Cardinal;
+    link_next_thread: PThreadMemory;
     prev_thread_memory: PThreadMemory;
     next_thread_memory: PThreadMemory;
     procedure initialize(owner_: PMemManager; mini, small: PMemItemsBlock);
@@ -423,10 +481,10 @@ type
     lock: TSpinlock;
     link_idle: PLinkData;
     link_buffer: PLinkData;
-    mem_idle: PLinkData;
+    mem_idle: PThreadMemory;
     mem_buffer: PLinkData;
     main_mgr: PThreadMemory;
-    mem_mgrs: array [0..SIZE_HASH_THREAD_MGR - 1] of PThreadMemory;
+    mem_mgrs: PThreadMemory;
     function pop_link: PLinkData;
     {$ifdef has_inline} inline; {$endif}
     procedure push_link(data: PLinkData);
@@ -533,16 +591,16 @@ begin
 end;
 
 {$endif}
-procedure mprint(format: PChar; const argv: array of const);
+procedure mprint(format: PAnsiChar; const argv: array of const);
 var
   i: Integer;
   params: array [0..31] of Cardinal;
-  buffer: array [0..127] of Char;
+  buffer: array [0..127] of AnsiChar;
 begin
   for i := low(argv) to high(argv) do
     params[i] := argv[i].VInteger;
-  buffer[wvsprintf(buffer, format, @params)] := #0;
-  OutputDebugString(buffer);
+  buffer[wvsprintfA(buffer, format, @params)] := #0;
+  OutputDebugStringA(buffer);
 end;
 
 { TThreadMemory }
@@ -644,7 +702,7 @@ var
   block, next_block: PMemBlock;
 begin
   active := false;
-  if other_thread_free_lists = nil then
+  if other_thread_free_lists <> nil then
     do_freemem_from_other_thread;
 
   free_mem_items(mini_block);
@@ -665,7 +723,6 @@ begin
   while block_buffer <> nil do
   begin
     next := block_buffer.next;
-    //virtual_free(block_buffer.data);
     owner.release_block(block_buffer.data);
     block_buffer := next;
   {$ifdef debug}
@@ -712,27 +769,34 @@ end;
 procedure TThreadMemory.add_link(mem: PMem);
 var
   link: PMemLink;
-  link_index: Integer;
+  index: Integer;
+  link_address: ^PMemLink;
 begin
 {$ifopt c+}
   if mem.flag > 0 then
     assert(mem.flag and FLAG_LINK <> FLAG_LINK);
-  //assert(not mem.link.is_link);
-{$endif}
-
   if mem.flag and FLAG_LINK = FLAG_LINK then exit;
-  inc(medium_link_count);
-  medium_link_size := medium_link_size + mem.size;
-  link := Pointer(mem);
-  link_index := mem.size shr BIT_LINK_MEDIUM;
-  if link_index >= MAX_LINK_MEDIUM then
-    link_index := MAX_LINK_MEDIUM - 1;
+{$endif}
+  inc(medium_total_link_size, mem.size);
   mem.flag := FLAG_BLOCK_MEDIUM or FLAG_LINK;
-  link.link_prev := nil;
-  link.link_next := medium_links[link_index];
-  if link.link_next <> nil then
-    link.link_next.link_prev := link;
-  medium_links[link_index] := link;
+
+  index := mem.size shr BIT_LINK_MEDIUM;
+  if index >= MAX_LINK_MEDIUM then
+    index := MAX_LINK_MEDIUM - 1;
+  link := Pointer(mem);
+  with link^ do
+  begin
+    link_index := index;
+    link_size := @medium_link_sizes[index];
+    inc(link_size^, mem.size);
+
+    link_address := @medium_links[index];
+    link_prev := nil;
+    link_next := link_address^;
+    if link_next <> nil then
+      link_next.link_prev := link;
+    link_address^ := link;
+  end;
 
 {$ifdef qmm_debug}
   if mem.flag > 0 then
@@ -740,37 +804,33 @@ begin
 {$endif}
 end;
 
-function TThreadMemory.del_link(mem: PMem; mem_size: MSIZE): Boolean;
+procedure TThreadMemory.del_link(mem: PMem; mem_size: MSIZE);
 var
   link: PMemLink;
-  link_index: Integer;
 begin
 {$ifopt c+}
   assert(mem.flag and FLAG_LINK = FLAG_LINK);
+  if mem.flag and FLAG_LINK = FLAG_LINK then
 {$endif}
-  result := mem.flag and FLAG_LINK = FLAG_LINK;
-  if result then
   begin
-    dec(medium_link_count);
-    medium_link_size := medium_link_size - mem.size;
-    link := Pointer(mem);
     mem.flag := FLAG_BLOCK_MEDIUM;
-    if link.link_prev = nil then
+    link := Pointer(mem);
+    dec(medium_total_link_size, mem.size);
+    with link^ do
     begin
-      link_index := mem_size shr BIT_LINK_MEDIUM;
-      if link_index >= MAX_LINK_MEDIUM then
-        link_index := MAX_LINK_MEDIUM - 1;
-      medium_links[link_index] := link.link_next;
-      if link.link_next <> nil then
-        link.link_next.link_prev := nil;
-    end else
-    begin
-      link.link_prev.link_next := link.link_next;
-      if link.link_next <> nil then
-        link.link_next.link_prev := link.link_prev;
+      dec(link_size^, mem.size);
+      if link_prev = nil then
+      begin
+        medium_links[link_index] := link_next;
+        if link_next <> nil then
+          link_next.link_prev := nil;
+      end else
+      begin
+        link_prev.link_next := link_next;
+        if link_next <> nil then
+          link_next.link_prev := link_prev;
+      end;
     end;
-    link.link_next := nil;
-    link.link_prev := nil;
   end;
 end;
 
@@ -800,7 +860,6 @@ end;
 
 function TThreadMemory.mem_item_get(block: PMemItemsBlock; size: MSIZE): Pointer;
 var
-  //idle: PLinkData;
   curr: PMem;
   items: PMemItems;
   buffer: PMemItemBuffer;
@@ -818,7 +877,7 @@ begin
       if items_buffer <> nil then
         items_buffer.prev := buffer;
       items_buffer := buffer;
-      if first_buffer = nil then
+      if (first_buffer = nil) and block.first_keep then
         first_buffer := buffer;
     end;
   end;
@@ -881,10 +940,9 @@ begin
     item.item_next := Pointer(free_item);
     free_item := Pointer(item);
     inc(free_index);
-    if (free_index = item_count) then
+    if (free_index = used_count) and (first_buffer <> buffer) then
     begin
-      if not owner.first_keep or (first_buffer <> buffer) then
-        mem_item_free_buffer(buffer);
+      mem_item_free_buffer(buffer);
     end;
     with status do
     begin
@@ -917,68 +975,76 @@ function TThreadMemory.medium_get_idle(var size: MSIZE): Pointer;
 var
   block: PMemBlock;
   curr, next, next_next: PMem;
-  link_size: Int64;
-  limit_count, link_index, next_size: MSIZE;
+  link_index, link_size, limit_count, next_size: MSIZE;
+label
+  search_succed_, search_next_loop_;
 begin
   result := nil;
+  if medium_total_link_size < size then exit;
 
-  if (medium_link_size < size) then exit;
-
+  curr := nil;
   link_index := (size shr BIT_LINK_MEDIUM);
   if link_index >= MAX_LINK_MEDIUM then
     link_index := MAX_LINK_MEDIUM - 1;
+
+  if medium_link_sizes[link_index] < size then
+    goto search_next_loop_;
+
   limit_count := 100;
-  curr := nil;
-  link_size := medium_link_size;
-  while (link_index <= MAX_LINK_MEDIUM - 1) do
-  begin
-    if medium_links[link_index] = nil then
+  link_size := medium_link_sizes[link_index];
+  curr := Pointer(medium_links[link_index]);
+  repeat
+  {$ifopt c+}
+    assert(curr.flag and FLAG_LINK = FLAG_LINK);
+  {$endif}
+    if curr.size >= size then
     begin
-      inc(link_index);
-      continue;
-    end else
-    begin
-      curr := Pointer(medium_links[link_index]);
-      inc(link_index);
+      goto search_succed_;
     end;
 
-    while (link_size >= size) and (curr <> nil) and (limit_count > 0) do
-    begin
-    {$ifopt c+}
-      assert(curr.flag and FLAG_LINK = FLAG_LINK);
-    {$endif}
-      if curr.size >= size then
-      begin
-        del_link(curr, curr.size);
-        block := curr.owner;
-        next_size := curr.size - SIZE_HEADER - size;
-        curr.flag := FLAG_BLOCK_MEDIUM or FLAG_USED;
-        if next_size >= MAX_SIZE_SMALL then
-        begin
-          curr.size := size;
-          next := Pointer(MADDR(curr) + SIZE_HEADER + size);
-          next.flag := FLAG_BLOCK_MEDIUM;
-          next.size := next_size;
-          next.owner := block;
-          next.prev := curr;
-          next_next := Pointer(MADDR(next) + SIZE_HEADER + next_size);
-          if MADDR(next_next) < MADDR(block.end_ptr) then
-            next_next.prev := next;
-          add_link(next);
-        end else
-          size := curr.size;
-        result := MADDR(curr) + SIZE_HEADER;
-        exit;
-      end;
-      link_size := link_size - curr.size;
-      curr := Pointer(PMemLink(curr).link_next);
-      dec(limit_count);
-    end;
-
-    limit_count := 100;
+    dec(link_size, curr.size);
     if link_size < size then
-      break;
+      goto search_next_loop_;
+    curr := Pointer(PMemLink(curr).link_next);
+    if curr = nil then
+      goto search_next_loop_;
+    dec(limit_count);
+    if limit_count <= 0 then
+      goto search_next_loop_;
+  until false;
+
+search_next_loop_:
+  inc(link_index);
+  while link_index <= MAX_LINK_MEDIUM - 1 do
+  begin
+    curr := Pointer(medium_links[link_index]);
+    if curr = nil then
+      inc(link_index)
+    else
+      goto search_succed_;
   end;
+  exit;
+
+search_succed_:
+  del_link(curr, curr.size);
+  block := curr.owner;
+  next_size := curr.size - SIZE_HEADER - size;
+  curr.flag := FLAG_BLOCK_MEDIUM or FLAG_USED;
+  if next_size >= MAX_SIZE_SMALL then
+  begin
+    curr.size := size;
+    next := Pointer(MADDR(curr) + SIZE_HEADER + size);
+    next.flag := FLAG_BLOCK_MEDIUM;
+    next.size := next_size;
+    next.owner := block;
+    next.prev := curr;
+    next_next := Pointer(MADDR(next) + SIZE_HEADER + next_size);
+    if MADDR(next_next) < MADDR(block.end_ptr) then
+      next_next.prev := next;
+    add_link(next);
+  end else
+    size := curr.size;
+  result := MADDR(curr) + SIZE_HEADER;
 end;
 
 const
@@ -993,9 +1059,6 @@ var
 label
   quit_;
 begin
-{$ifdef qmm_debug}
-  block := nil;
-{$endif}
   result := medium_get_idle(size);
   if result <> nil then
   begin
@@ -1012,8 +1075,7 @@ begin
 {$ifdef qmm_debug}
   mcheck_medium(10, block, @medium_links);
 {$endif}
-  while result = nil do
-  begin
+  repeat
     curr := block.curr_mem;
     if curr.size >= size then
     begin
@@ -1035,7 +1097,7 @@ begin
         block.curr_mem := nil;
       end;
       result := MADDR(curr) + SIZE_HEADER;
-      break;
+      goto quit_;
     end else
     begin
       if curr.size >= MAX_SIZE_SMALL then
@@ -1064,7 +1126,7 @@ begin
       block.curr_mem := nil;
       block := create_block(size);
     end;
-  end;
+  until false;
 
 quit_:
   with status do
@@ -1301,8 +1363,8 @@ end;
 function TThreadMemory.large_mem_realloc(p: Pointer; new_size: MSIZE): Pointer;
 var
   can_resize: Boolean;
-  resize_size: MSIZE;
   curr, next: PMem;
+  resize_size: MSIZE;
 begin
   curr := p;
   if curr.size >= new_size then
@@ -1313,7 +1375,7 @@ begin
   end else
   begin
     can_resize := false;
-    next := Pointer(MADDR(p) + SIZE_HEADER + curr.size);
+    next := Pointer(MADDR(curr) + SIZE_HEADER + curr.size);
     resize_size := (new_size - curr.size + cMinAllocSize - 1) and -cMinAllocSize;
     if VirtualAlloc(next, resize_size, MEM_RESERVE, PAGE_READWRITE) <> nil then
     begin
@@ -1384,7 +1446,6 @@ begin
     block_buffer := idle;
     inc(block_buffer_count);
   end else
-    //virtual_free(block);
     owner.release_block(block);
 end;
 
@@ -1406,7 +1467,6 @@ begin
     dec(block_buffer_count);
   end else
   begin
-    //new_block := virtual_alloc(size);
     new_block := owner.create_block(size, need_size);
     new_block.owner := @self;
     new_block.src_ptr := Pointer(MADDR(new_block) + sizeof(TMemBlock));
@@ -1465,7 +1525,8 @@ begin
       begin
         result := memory_get(new_size);
         if new_size > curr.size then
-          move((MADDR(curr) + SIZE_HEADER)^, result^, curr.size)
+          curr.item_buffer.owner.move_upsize((MADDR(curr) + SIZE_HEADER)^, result^, curr.size)
+          //  move((MADDR(curr) + SIZE_HEADER)^, result^, curr.size)
         else
           move((MADDR(curr) + SIZE_HEADER)^, result^, new_size);
         mem_item_free(curr);
@@ -1567,7 +1628,6 @@ begin
   if jump.op_code <> OP_JMP then
   begin
     old_jump := jump^;
-    // jmp <Displacement>        jmp -$00001234
     jump^.op_code   := OP_JMP;
     jump^.distance := MADDR(dest) - MADDR(src) - sizeof(TJump);
     FlushInstructionCache(GetCurrentProcess, src, sizeof(TJump));
@@ -1724,7 +1784,7 @@ begin
     virtual_free(block);
   end;
 {$ifdef qmm_debug}
-  mprint('release_block: tid: %d, block_alloc_count: %d', [GetCurrentThreadId, block_alloc_count]);
+  mprint('release_block: tid: %d %d', [GetCurrentThreadId]);
 {$endif}
 end;
 
@@ -1747,7 +1807,7 @@ begin
     result := virtual_alloc(size);
   end;
 {$ifdef qmm_debug}
-  mprint('create block: tid: %d, block_alloc_count: %d', [GetCurrentThreadId, block_alloc_count]);
+  mprint('create block: tid: %d', [GetCurrentThreadId]);
 {$endif}
 end;
 
@@ -1793,6 +1853,13 @@ begin
     items.item_size := min + item_step * i;
     items.item_step := items.item_size + SIZE_HEADER;
     items.item_flag_used := block_flag or FLAG_USED;
+    if items.item_size = 32 then
+      items.move_upsize := move32
+    else
+    if items.item_size = 64 then
+      items.move_upsize := move64
+    else
+      items.move_upsize := @move;
     block.lists[i] := items;
     inc(items);
   end;
@@ -1816,44 +1883,35 @@ begin
   thread := addr;
   while count > 0 do
   begin
-    link := pop_link;
-    link.data := thread;
-    link.next := mem_idle;
-    mem_idle := link;
+    fillchar(thread^, sizeof(TThreadMemory), 0);
+    thread.link_next_thread := mem_idle;
+    mem_idle := thread;
     inc(thread);
     dec(count);
   end;
 end;
 
 function TMemManager.pop_thread_memory: PThreadMemory;
-var
-  link: PLinkData;
 begin
   spinlock_lock(@lock);
   if mem_idle = nil then
     create_thread_memory_buffer;
-  link := mem_idle;
-  mem_idle := link.next;
-  result := link.data;
-  push_link(link);
+  result := mem_idle;
+  mem_idle := result.link_next_thread;
+  result.link_next_thread := nil;
   spinlock_unlock(@lock);
 end;
 
 procedure TMemManager.push_thread_memory(thread_memory: PThreadMemory);
-var
-  link: PLinkData;
 begin
   spinlock_lock(@lock);
-  link := pop_link;
-  link.data := thread_memory;
-  link.next := mem_idle;
-  mem_idle := link;
+  thread_memory.link_next_thread := mem_idle;
+  mem_idle := thread_memory;
   spinlock_unlock(@lock);
 end;
 
 function TMemManager.create_thread_memory(thread_id: Cardinal): PThreadMemory;
 var
-  index: Integer;
   mini_block, small_block: PMemItemsBlock;
 begin
   result := nil;
@@ -1874,12 +1932,11 @@ begin
   local_thread_memory := result;
 
   spinlock_lock(@lock);
-  index := thread_id and (SIZE_HASH_THREAD_MGR - 1);
   result.prev_thread_memory := nil;
-  result.next_thread_memory := mem_mgrs[index];
-  if mem_mgrs[index] <> nil then
-    mem_mgrs[index].prev_thread_memory := result;
-  mem_mgrs[index] := result;
+  result.next_thread_memory := mem_mgrs;
+  if mem_mgrs <> nil then
+    mem_mgrs.prev_thread_memory := result;
+  mem_mgrs := result;
   inc(thread_count);
   System.IsMultiThread := thread_count > 1;
   spinlock_unlock(@lock);
@@ -1898,9 +1955,9 @@ begin
   spinlock_lock(@lock);
   if thread.prev_thread_memory = nil then
   begin
-    mem_mgrs[thread_id and (SIZE_HASH_THREAD_MGR - 1)] := thread.next_thread_memory;
-    if thread.next_thread_memory <> nil then
-      thread.next_thread_memory.prev_thread_memory := nil;
+    mem_mgrs := thread.next_thread_memory;
+    if mem_mgrs <> nil then
+      mem_mgrs.prev_thread_memory := nil;
   end else
   begin
     thread.prev_thread_memory.next_thread_memory := thread.next_thread_memory;
@@ -2001,6 +2058,9 @@ begin
   result := memory_alloc(size);
 end;
 
+const
+  MIN_SIZE_KEEP = MAX_SIZE_MINI shr 2;
+
 function memory_realloc(p: Pointer; new_size: MSIZE): Pointer;
 var
   curr: PMem;
@@ -2012,21 +2072,18 @@ begin
     if (curr.size >= new_size) then
     begin
       diff := curr.size - new_size;
-      if (diff > MIN_MEM_SIZE) then
+      if diff <= MIN_SIZE_KEEP then
+        result := p
+      else
       begin
         if (new_size >= (curr.size shr 1)) then
         begin
           result := p
         end else
         begin
-          // keep on 32-64
-          if (curr.size <= MAX_SIZE_MINI shr 2) then
-            result := p
-          else
-            result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
+          result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
         end;
-      end else
-        result := p;
+      end;
     end else
     begin
       result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
@@ -2036,10 +2093,8 @@ begin
   {$ifdef qmm_debug}
     mprint('realloc.invalid pointer: %.8X, flag: %.8X, size: $%.8X',
       [Integer(curr), curr.flag, curr.size]);
-    System.Error(reInvalidPtr);
-  {$else}
-    result := nil;
   {$endif}
+    result := nil;
   end;
 end;
 
@@ -2052,7 +2107,12 @@ begin
     else
       result := nil;
   end else
-    result := memory_get(new_size);
+  begin
+    if new_size > 0 then
+      result := memory_get(new_size)
+    else
+      result := nil;
+  end;
 end;
 
 function memory_free(p: Pointer): Integer;
@@ -2062,12 +2122,11 @@ begin
   else
   begin
   {$ifdef qmm_debug}
-    mprint('free.invalid pointer: %.8X, flag: %.8X, size: $%.8X',
-      [Integer(curr), curr.flag, curr.size]);
-    System.Error(reInvalidPtr);
-  {$else}
-    result := -1;
+    with PMem(MADDR(p) - SIZE_HEADER)^ do
+      mprint('free.invalid pointer: %.8X, flag: %.8X, size: $%.8X',
+        [Integer(p) - SIZE_HEADER, flag, size]);
   {$endif}
+    result := -1;
   end;
 end;
 
@@ -2125,8 +2184,7 @@ begin
   begin
     if not assigned(on_memory_error_proc) then
     begin
-      sleep(0);
-      asm int 3 end;
+      assert(false);
     end else
       on_memory_error_proc(op, MADDR(mem) + sizeof(TDebugMem), mem.ori_size);
   end;
@@ -2143,7 +2201,9 @@ begin
   debug_memory_check(opRealloc, ori_mem);
   last_tag := ori_mem.last_tag;
   new_mem := memory_realloc(ori_mem, size + sizeof(TDebugMem) + sizeof(Cardinal));
-  if (last_tag <> new_mem.last_tag) or (new_mem.first_tag <> TAG_FIRST) then
+
+  assert(new_mem <> nil);
+  if (new_mem <> nil) and (last_tag <> new_mem.last_tag) or (new_mem.first_tag <> TAG_FIRST) then
   begin
     assert(false);
   end;
@@ -2183,38 +2243,30 @@ end;
 
 function memory_status: TMemoryStatus;
 var
-  i: Integer;
-  link: PLinkData;
   thread_memory: PThreadMemory;
 begin
   fillchar(result, sizeof(result), #0);
-  for i := 0 to SIZE_HASH_THREAD_MGR - 1 do
+  thread_memory := mem_mgr.mem_mgrs;
+  while thread_memory <> nil do
   begin
-    thread_memory := mem_mgr.mem_mgrs[i];
-    while thread_memory <> nil do
-    begin
-      if thread_memory.initialized then
-        with thread_memory.status do
-        begin
-          result.total_alloc := result.total_alloc + total_alloc;
-          result.total_free := result.total_free + total_free;
-          result.small_alloc := result.small_alloc + small_alloc;
-          result.small_free := result.small_free + small_free;
-          result.medium_alloc := result.medium_alloc + medium_alloc;
-          result.medium_free := result.medium_free + medium_free;
-          result.large_alloc := result.large_alloc + large_alloc;
-          result.large_free := result.large_free + large_free;
-          result.block_count := result.block_count + block_count;
-          //result.large_block_count := result.large_block_count + large_block_count;
-          //result.error_free_block := result.error_free_block + error_free_block;
-        end;
-      thread_memory := thread_memory.next_thread_memory;
-    end;
+    if thread_memory.initialized then
+      with thread_memory.status do
+      begin
+        result.total_alloc := result.total_alloc + total_alloc;
+        result.total_free := result.total_free + total_free;
+        result.small_alloc := result.small_alloc + small_alloc;
+        result.small_free := result.small_free + small_free;
+        result.medium_alloc := result.medium_alloc + medium_alloc;
+        result.medium_free := result.medium_free + medium_free;
+        result.large_alloc := result.large_alloc + large_alloc;
+        result.large_free := result.large_free + large_free;
+        result.block_count := result.block_count + block_count;
+      end;
+    thread_memory := thread_memory.next_thread_memory;
   end;
-  link := mem_mgr.mem_idle;
-  while link <> nil do
+  thread_memory := mem_mgr.mem_idle;
+  while thread_memory <> nil do
   begin
-    thread_memory := link.data;
     if not thread_memory.initialized then
       break;
     with thread_memory.status do
@@ -2228,10 +2280,8 @@ begin
       result.large_alloc := result.large_alloc + large_alloc;
       result.large_free := result.large_free + large_free;
       result.block_count := result.block_count + block_count;
-      //result.large_block_count := result.large_block_count + large_block_count;
-      //result.error_free_block := result.error_free_block + error_free_block;
     end;
-    link := link.next;
+    thread_memory := thread_memory.link_next_thread;
   end;
 end;
 
@@ -2375,7 +2425,6 @@ begin
   path[val + flen + 1] := #0;
 end;
 
-{$ifdef debug}
 procedure report_memory_leak_to_file();
 var
   log_file: THandle;
@@ -2448,11 +2497,11 @@ var
 
   procedure report_leak(mem: Pointer; mem_size: MSIZE);
   var
+    SI: TSystemTime;
     ptr: PAnsiChar;
     str_rec: PStrRec;
     instance_class: TClass;
     curr_mem: Pointer;
-    debug_mem: PDebugMem;
     buffer: array [0..1023] of AnsiChar;
   begin
     if not is_log_start then
@@ -2462,6 +2511,9 @@ var
       buffer[80] := #0;
       report_format('%s'#13#10'This application has leaked memory(excluding expected leaks registered):',
         [Integer(@buffer[0])]);
+      GetLocalTime(SI);
+      report_format('log start: %.4d-%.2d-%.2d %.2d:%.2d:%.2d',
+        [SI.wYear, SI.wMonth, SI.wDay, SI.wHour, SI.wMinute, SI.wSecond]);
       MessageBoxA(0, '!!The app has leaked memory, please see "memory.leak.txt"!!!', 'leaked', MB_ICONWARNING);
     end;
     if not is_log_threadid then
@@ -2479,8 +2531,11 @@ var
 
     inc(leak_index);
     report_format('leak %d:', [leak_index]);
-    debug_mem := mem;
-    curr_mem := MADDR(debug_mem) + sizeof(TDebugMem);
+  {$ifdef debug}
+    curr_mem := MADDR(mem) + sizeof(TDebugMem);
+  {$else}
+    curr_mem := Pointer(MADDR(mem) + SIZE_HEADER);
+  {$endif}
     instance_class := detect_class(curr_mem);
     if instance_class <> nil then
     begin
@@ -2489,15 +2544,17 @@ var
       move((ptr + 1)^, buffer[0], Byte(ptr^));
       report_format('Class Name: %s, instance address: $%.8X, instance size: %d, mem size: %d', [
         Integer(@buffer[0]), Integer(curr_mem),
-        PInteger(Integer(curr_mem^) + vmtInstanceSize)^, debug_mem.ori_size]);
+        PInteger(Integer(curr_mem^) + vmtInstanceSize)^, mem_size]);
+      to_hex(curr_mem, PInteger(Integer(curr_mem^) + vmtInstanceSize)^, buffer, sizeof(buffer));
+      report_format('%s', [MSIZE(@buffer[0])]);
     end else
     begin
-      case detect_string_type(curr_mem, debug_mem.ori_size) of
+      case detect_string_type(curr_mem, mem_size) of
         stUnknow:
         begin
-          to_hex(curr_mem, debug_mem.ori_size, buffer, sizeof(buffer));
+          to_hex(curr_mem, mem_size, buffer, sizeof(buffer));
           report_format('unknow data: $%.8X, size: %d, data: '#13#10'%s', [
-            Integer(curr_mem), debug_mem.ori_size, Integer(@buffer[0])]);
+            Integer(curr_mem), mem_size, Integer(@buffer[0])]);
         end;
         stAnsi:
         begin
@@ -2524,7 +2581,9 @@ var
     item_buf: PMemItemBuffer;
     item: PMem;
     items: PMemItems;
+  {$ifdef debug}
     debug_mem: PDebugMem;
+  {$endif}
     used_flag: MSIZE;
     i, item_step, item_count: Integer;
   begin
@@ -2539,7 +2598,6 @@ var
       while item_buf <> nil do
       begin
         if (item_buf.used_count > 0) and (item_buf.free_index <> item_buf.used_count) then
-        //if item_buf.item_count <> item_buf.idle_count then
         begin
           item_count := item_buf.item_count;
           item := @item_buf.data[0];
@@ -2547,17 +2605,14 @@ var
           begin
             if item.flag and FLAG_MASK = used_flag then
             begin
+            {$ifdef debug}
               debug_mem := Pointer(MADDR(item) + SIZE_HEADER);
-              //owner := item.owner.owner;
               if not mem_mgr.is_register_leak(MADDR(debug_mem) + sizeof(TDebugMem)) then
-              begin
-              {$ifopt c+}
-                //assert(debug_mem.first_tag = TAG_FIRST);
-                //assert((debug_mem.last_tag <> nil) and (debug_mem.last_tag^ = TAG_FIRST));
-                //assert(debug_mem.ori_size > MIN_MEM_SIZE);
-              {$endif}
-                report_leak(debug_mem, item.size);
-              end;
+                report_leak(debug_mem, debug_mem.ori_size);
+            {$else}
+              if not mem_mgr.is_register_leak(MADDR(item) + SIZE_HEADER) then
+                report_leak(item, item.size);
+            {$endif}
             end;
             item := Pointer(MADDR(item) + item_step);
             dec(item_count);
@@ -2570,8 +2625,9 @@ var
 
   procedure report_block(block: PMemBlock);
   var
-    //owner: PThreadMemory;
+  {$ifdef debug}
     debug_mem: PDebugMem;
+  {$endif}
     start, curr, next: PMem;
     used_flag, used_len, curr_size: MSIZE;
   begin
@@ -2592,18 +2648,15 @@ var
         next := Pointer(MADDR(curr) + SIZE_HEADER + curr_size);
         if curr.flag and FLAG_MASK = used_flag then
         begin
+        {$ifdef debug}
           debug_mem := Pointer(MADDR(curr) + SIZE_HEADER);
           assert((curr.owner <> nil) and (curr.owner.owner <> nil));
-          //owner := curr.owner.owner;
           if not mem_mgr.is_register_leak(MADDR(debug_mem) + sizeof(TDebugMem)) then
-          begin
-          {$ifopt c+}
-            //assert(debug_mem.first_tag = TAG_FIRST);
-            //assert((debug_mem.last_tag <> nil) and (debug_mem.last_tag^ = TAG_FIRST));
-            //assert(debug_mem.ori_size > MIN_MEM_SIZE);
-          {$endif}
-            report_leak(debug_mem, curr_size);
-          end;
+            report_leak(debug_mem, debug_mem.ori_size);
+        {$else}
+          if not mem_mgr.is_register_leak(MADDR(curr) + SIZE_HEADER) then
+            report_leak(curr, curr_size);
+        {$endif}
         end;
         curr := next;
       end;
@@ -2612,7 +2665,7 @@ var
   end;
 
 var
-  i: Integer;
+  SI: TSystemTime;
   thread_memory: PThreadMemory;
   buffer: array [0..MAX_PATH - 1] of AnsiChar;
 begin
@@ -2624,35 +2677,40 @@ begin
   try
     log_val := 0;
     log_len := sizeof(log_buf);
-    for i := 0 to SIZE_HASH_THREAD_MGR - 1 do
+
+    thread_memory := mem_mgr.mem_mgrs;
+    while thread_memory <> nil do
     begin
-      thread_memory := mem_mgr.mem_mgrs[i];
-      while thread_memory <> nil do
+      if thread_memory.initialized then
       begin
-        if thread_memory.initialized then
+        if last_thread_id <> thread_memory.thread_id then
         begin
-          if last_thread_id <> thread_memory.thread_id then
-          begin
-            leak_index := 0;
-            if is_log_threadid and (curr_thread_id <> 0) then
-              report_format('-------------------------------------------------------------------------------', []);
-            is_log_threadid := false;
-            last_thread_id := curr_thread_id;
-            curr_thread_id := thread_memory.thread_id;
-          end;
-          report_mem_items_block(thread_memory.mini_block);
-          report_mem_items_block(thread_memory.small_block);
-          //report_block(thread_memory.small_block);
-          report_block(thread_memory.medium_block);
-          //report_block(thread_memory.large_block);
+          leak_index := 0;
           if is_log_threadid and (curr_thread_id <> 0) then
-            report_format('--------------------------------------------------------------------------------', []);
+          begin
+            report_format('-------------------------------------------------------------------------------', []);
+          end;
+          is_log_threadid := false;
+          last_thread_id := curr_thread_id;
+          curr_thread_id := thread_memory.thread_id;
         end;
-        thread_memory := thread_memory.next_thread_memory;
+        report_mem_items_block(thread_memory.mini_block);
+        report_mem_items_block(thread_memory.small_block);
+        report_block(thread_memory.medium_block);
+        if is_log_threadid and (curr_thread_id <> 0) then
+        begin
+          report_format('--------------------------------------------------------------------------------', []);
+        end;
       end;
+      thread_memory := thread_memory.next_thread_memory;
     end;
+
+
     if is_log_start then
     begin
+      GetLocalTime(SI);
+      report_format('log end: %.4d-%.2d-%.2d %.2d:%.2d:%.2d',
+        [SI.wYear, SI.wMonth, SI.wDay, SI.wHour, SI.wMinute, SI.wSecond]);
       fillchar(buffer[0], 77, '=');
       buffer[77] := #0;
       report_format('%sEND', [Integer(@buffer[0])]);
@@ -2664,7 +2722,7 @@ begin
       CloseHandle(log_file);
   end;
 end;
-{$endif}
+
 { init/uninit }
 
 type
@@ -2795,10 +2853,8 @@ end;
 
 procedure finalize_memory_manager;
 begin
-{$ifdef debug}
   if ReportMemoryLeaksOnShutdown then
     report_memory_leak_to_file();
-{$endif}
 
   if is_qmm_set then
   begin
