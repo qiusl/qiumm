@@ -20,7 +20,7 @@ Parallel MM: ScaleMM, QMM, SAPMM
 
 Q: which MM is the most stable, the most appropriate production and development?
 
-A: (this is a personal opinion, for reference only)
+A: (!!!this is a personal opinion, for reference only!!!)
   I present test case, use the FastMM+multithread pool mode of production development.
 
   On the server side aspects of the procedure can be considered: ScaleMM2.0, or SAPMM.
