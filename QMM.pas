@@ -813,12 +813,11 @@ begin
   if mem.flag and FLAG_LINK = FLAG_LINK then
 {$endif}
   begin
-    mem.flag := FLAG_BLOCK_MEDIUM;
     link := Pointer(mem);
-    dec(medium_total_link_size, mem.size);
     with link^ do
     begin
       dec(link_size^, mem.size);
+      dec(medium_total_link_size, mem.size);
       if link_prev = nil then
       begin
         medium_links[link_index] := link_next;
@@ -830,6 +829,7 @@ begin
         if link_next <> nil then
           link_next.link_prev := link_prev;
       end;
+      mem.flag := FLAG_BLOCK_MEDIUM;
     end;
   end;
 end;
@@ -1059,6 +1059,9 @@ var
 label
   quit_;
 begin
+{$ifdef qmm_debug}
+  block := nil;
+{$endif}
   result := medium_get_idle(size);
   if result <> nil then
   begin
@@ -1150,19 +1153,37 @@ begin
 {$ifdef qmm_debug}
   mcheck_medium(30, curr.owner, @medium_links);
 {$endif}
+  block := curr.owner;
   old_size := curr.size;
   if old_size >= new_size then
   begin
-    if old_size - SIZE_HEADER - new_size < MAX_SIZE_SMALL then exit;
+    remain_size := old_size - SIZE_HEADER - new_size;
+    if remain_size < MAX_SIZE_MINI then exit;
 
-    result := memory_get(new_size);
-    move((MADDR(curr) + SIZE_HEADER)^, result^, new_size);
-    medium_mem_free(curr);
+    if new_size >= MAX_SIZE_MINI shr 1 then
+    begin
+      new_size := (new_size + MIN_MEM_SIZE - 1) and -MIN_MEM_SIZE;
+      remain_size := old_size - SIZE_HEADER - new_size;
+      curr.size := new_size;
+      new_next := Pointer(MADDR(curr) + SIZE_HEADER + new_size);
+      new_next.flag := FLAG_BLOCK_MEDIUM or FLAG_USED;
+      new_next.size := remain_size;
+      new_next.owner := block;
+      new_next.prev := curr;
+      next := Pointer(MADDR(curr) + SIZE_HEADER + old_size);
+      if MADDR(next) < MADDR(block.end_ptr) then
+        next.prev := new_next;
+      medium_mem_free(new_next);
+    end else
+    begin
+      result := memory_get(new_size);
+      move((MADDR(curr) + SIZE_HEADER)^, result^, new_size);
+      medium_mem_free(curr);
+    end;
   end else
   begin
     //new_size > old_size
     can_resize := false;
-    block := curr.owner;
     next := Pointer(MADDR(curr) + SIZE_HEADER + old_size);
     if MADDR(next) < MADDR(block.end_ptr) then
     begin
@@ -2064,26 +2085,18 @@ const
 function memory_realloc(p: Pointer; new_size: MSIZE): Pointer;
 var
   curr: PMem;
-  diff: MSIZE;
 begin
   curr := Pointer(MADDR(p) - SIZE_HEADER);
   if curr.flag and FLAG_MASK = FLAG_USED then
   begin
     if (curr.size >= new_size) then
     begin
-      diff := curr.size - new_size;
-      if diff <= MIN_SIZE_KEEP then
-        result := p
-      else
+      if (curr.size <= MIN_SIZE_KEEP) or (curr.size - new_size <= MIN_SIZE_KEEP)
+        or (new_size >= (curr.size shr 1)) then
       begin
-        if (new_size >= (curr.size shr 1)) then
-        begin
-          result := p
-        end else
-        begin
-          result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
-        end;
-      end;
+        result := p
+      end else
+        result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
     end else
     begin
       result := mem_mgr.get_current_thread_memory.memory_realloc(p, new_size);
