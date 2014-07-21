@@ -1,12 +1,12 @@
-�ڴ�Խ�絥ԪDEMO
+﻿内存越界单元DEMO
 
-1���ڹ��������ӵ�Ԫ��QMMErrorUtils.pas ��ע�⣬����ڹ���˳��Ϻ����޷����������Ԫ�У�������[initialization����]���ڴ����
+1：在工程中增加单元：QMMErrorUtils.pas （注意，如果在工程顺序较后，则无法检查其它单元中，启动中[initialization代码]的内存错误）
 
-2���ȴ������ļ��Ĳ���
-   �������ļ���Ϊ�� Application-path\mem-error\Project1.threadid=8804.txt
-       ��ÿ�̲߳������ļ���
+2：等待错误文件的产生
+   产生的文件名为： Application-path\mem-error\Project1.threadid=8804.txt
+       即每线程产生个文件。
 
-   �������ڴ�Խ������������£�
+   产生的内存越界错误数据如下：
 
 [2014-07-20 20:48:57]memory error:
 "Memory.Free", address: 004F105C, mem size: 4, instance data type: unknow class
@@ -20,7 +20,7 @@ hex data:
 A4 7D 4A 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 
 
-   ֻ���˼򵥼�������Ĵ������ַ������δ�����������и���stack trace��ַ�����ж�λ��Դ����
+   只做了简单检测类名的处理（字符串检测未处理）请自行根据stack trace地址，进行定位到源码检查
 
 -------
 end.
