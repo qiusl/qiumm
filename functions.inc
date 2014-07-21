@@ -69,6 +69,21 @@ type
         wProcessorRevision: Word);
   end;
 
+  _OSVERSIONINFOA = record
+    dwOSVersionInfoSize: DWORD;
+    dwMajorVersion: DWORD;
+    dwMinorVersion: DWORD;
+    dwBuildNumber: DWORD;
+    dwPlatformId: DWORD;
+    szCSDVersion: array[0..127] of AnsiChar; { Maintenance AnsiString for PSS usage }
+  end;
+  TOSVersionInfo = _OSVERSIONINFOA;
+
+function GetCurrentProcess: THandle; stdcall; external kernel32;
+function GetModuleHandleA(lpModuleName: PAnsiChar): HMODULE; stdcall; external kernel32;
+function GetProcAddress(hModule: HMODULE; lpProcName: PAnsiChar): Pointer; stdcall; external kernel32;
+
+function GetVersionExA(var lpVersionInformation: TOSVersionInfo): BOOL; stdcall; external kernel32;
 function InitializeCriticalSectionAndSpinCount(var lock: TRTLCriticalSection;
   spin: DWORD): BOOL; stdcall; external kernel32;
 procedure EnterCriticalSection(var lock: TRTLCriticalSection); stdcall;
@@ -77,6 +92,11 @@ procedure LeaveCriticalSection(var lock: TRTLCriticalSection); stdcall;
   external kernel32;
 procedure DeleteCriticalSection(var lock: TRTLCriticalSection); stdcall;
   external kernel32;
+
+function TlsAlloc: DWORD; stdcall;  external kernel32;
+function TlsGetValue(dwTlsIndex: DWORD): Pointer; stdcall; external kernel32;
+function TlsSetValue(dwTlsIndex: DWORD; lpTlsValue: Pointer): BOOL; stdcall; external kernel32;
+function TlsFree(dwTlsIndex: DWORD): BOOL; stdcall; external kernel32;
 
 function VirtualAlloc(addr: Pointer; size: SIZE_T; allocation_type,
   protect: DWORD): Pointer; stdcall; external kernel32;
@@ -126,7 +146,8 @@ function WideCharToMultiByte(CodePage, dwFlags: DWORD;
 procedure DebugBreak; external kernel32;
 procedure GetLocalTime(var lpSystemTime: TSystemTime); stdcall;
 external kernel32;
- 
+function SwitchToThread: BOOL; stdcall; external kernel32;
+
 const
   PAGE_READONLY = 2;
   PAGE_READWRITE = 4;
@@ -157,3 +178,4 @@ const
   FILE_ATTRIBUTE_NORMAL = $00000080;
   MB_ICONWARNING = $00000030;
   CP_ACP = 0;
+

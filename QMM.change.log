@@ -1,3 +1,15 @@
+BETA Version 1.1.3 (2014.07.21):
+  - add: QMMErrorUtils.pas
+         1: a simple tool unit for check memory of out bound
+         2: a demo for this unit.
+  - add: cmp.inc (from D2010.SysUtils.CompareMem) for compare mem(debug)
+  - add: constant: suffix_mem_check for memory check(out bound)
+  - fix: report(mprint) on win64
+  - add: if call virtual_free failed, it will raise.
+  - fix: free TMemManager.uninitialize.used_mem_block
+  - optimize: small memory
+  - add: large memory leak after app quit
+  - add: medium_realloc:: if next.flag = FLAG_USED and next memory is idle, then merge.
 BETA Version 1.1.2 (2014.01.05):
   - add: functions.inc for qmm API function/consts(for D2007up)
   - modified: assert, for win64

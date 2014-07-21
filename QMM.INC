@@ -6,6 +6,12 @@
   {$define release}
 {$ifend}
 
+{$ifdef debug}
+  {$define TRACE_STACK}
+
+  {$stackframes on} // {$W+}
+{$endif}
+
 {$ifdef release}
   {$ifdef qmm_debug}
     {$undef qmm_debug}
@@ -32,4 +38,7 @@
   {$rangechecks off}
   {$debuginfo off}
   {$localsymbols off}
+  {$warn unsafe_type off}
+  {$warn unsafe_code off}
+  {$warn unsafe_cast off}
 {$endif}

@@ -126,4 +126,4 @@ asm
 @@M08:
   fild    qword ptr [eax]
   fistp   qword ptr [edx]
-end; 
+end;
