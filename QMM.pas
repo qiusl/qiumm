@@ -2939,7 +2939,9 @@ var
       begin
         if (item_buf.idle_count <> item_buf.item_count) then
         begin
-          item_count := item_buf.item_count;
+          item_count := item_buf.used_count;
+          //fixed: error item_buf.other item never use, may be data is error
+          //item_count := item_buf.item_count;
           item := @item_buf.data[0];
           while item_count > 0 do
           begin
