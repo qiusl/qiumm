@@ -43,7 +43,7 @@ begin
   FreeMemory(p);
 
   // i := 8 <-> 16
-  i := 16;
+  i := 10;
   e := TErrorObject.Create;
   e.v[i] := 'c';
   e.Free;

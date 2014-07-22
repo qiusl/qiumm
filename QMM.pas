@@ -129,7 +129,7 @@ const
 
   // memory check size(after address)
   // NOTE: must be align sizeof(Pointer)
-  suffix_mem_check = sizeof(Pointer) * 2;
+  suffix_mem_check = sizeof(Pointer) * 4;
 
 {$endif}
 
@@ -2454,7 +2454,7 @@ begin
   begin
     tag^ := MEM_FILLER;
     inc(tag);
-    dec(size, sizeof(Pointer));
+    dec(size, sizeof(Cardinal));
   end;
 end;
 
@@ -2468,7 +2468,7 @@ begin
   begin
     tag^ := MEM_FILLER;
     inc(tag);
-    dec(size, sizeof(Pointer));
+    dec(size, sizeof(Cardinal));
   end;
 end;
 
