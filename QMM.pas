@@ -1,7 +1,7 @@
 
 { ***********************************************************************
 
-QIU Memory Manager 1.13 for Delphi
+QIU Memory Manager 1.14.1 for Delphi
 
 Description:
 	a simple and compact MM for Delphi/XE
@@ -15,8 +15,7 @@ Usage:
    project's .dpr file.
 
 Other:
- - important: test only by D7,D2010
- - NOT test on the WIN64
+ - test on D7/D2010/DXE6, win32[+win64]
  - support multithread, allocate memory for each thread manager.
 
 Support:
@@ -24,7 +23,7 @@ Support:
  address above.
 
 License:
-  Released under Mozilla Public License 1.1
+  Released under Mozilla Public License 2.0
 
   If you find QMM useful or you would like to support further development,
   a donation would be much appreciated.
@@ -32,7 +31,7 @@ License:
 
 Change log:
   plz see: QMM.change.log
-  last modified: 2014.07.21 by qiusonglin
+  last modified: 2014.10.07 by qiusonglin
 
  *********************************************************************** }
 unit QMM;
@@ -48,7 +47,7 @@ uses Windows;
 {$ifend}
 
 const
-  QMM_VERSION = 1.13;
+  QMM_VERSION = 1.14;
 
 type
   PSIZE = ^MSIZE;
@@ -349,7 +348,7 @@ begin
   if not result then
   begin
     int3;
-    sleep(step);
+    //sleep(step);
   end;
 end;
 {$endif}
@@ -767,6 +766,9 @@ begin
     if medium_block = nil then
       medium_block := create_block(0);
   end;
+{$ifdef debug}
+  mprint('thread: %d active...', [thread_id]);
+{$endif}
 end;
 
 procedure TThreadMemory.deactive;
@@ -801,6 +803,10 @@ var
   block, next_block: PMemBlock;
 begin
   active := false;
+
+{$ifdef debug}
+  mprint('thread: %d deactive...', [thread_id]);
+{$endif}
   if other_thread_free_lists <> nil then
     do_freemem_from_other_thread;
 
@@ -815,7 +821,7 @@ begin
     if mem.size >= block.src_len then
       release_block(block);
     block := next_block;
-  {$ifdef debug}
+  {$ifdef qmm_debug}
     mprint('tid: %d deactive release block', [thread_id]);
   {$endif}
   end;
@@ -824,12 +830,16 @@ begin
     next := block_buffer.next;
     owner.release_block(block_buffer.data);
     block_buffer := next;
-  {$ifdef debug}
+  {$ifdef qmm_debug}
     mprint('tid: %d deactive release block', [thread_id]);
   {$endif}
   end;
   block_buffer_count := 0;
-  thread_id := 0;
+{$ifdef qmm_debug}
+  mprint('tid: %d: after thread deactive, block count: %d', [thread_id, status.block_count]);
+{$endif}
+  // for report leak, by qsl, 2015.04.18
+  //thread_id := 0;
 end;
 
 function TThreadMemory.freemem_by_other_thread(p: Pointer): Integer;
@@ -838,22 +848,18 @@ var
   item: PLinkData;
 begin
   mem := Pointer(MADDR(p) - SIZE_HEADER);
-  if mem.flag and FLAG_WAITFORFREE <> 0 then
+  if mem.flag and FLAG_WAITFORFREE = 0 then
   begin
-    result := -1;
-    exit;
-  end else
-  begin
-    inc(mem.flag, FLAG_WAITFORFREE);
     result := 0;
-  end;
-
-  item := p;
-  item.data := p;
-  spin_lock(@lock);
-  item.next := other_thread_free_lists;
-  other_thread_free_lists := item;
-  spin_unlock(@lock);
+    spin_lock(@lock);
+    inc(mem.flag, FLAG_WAITFORFREE);
+    item := p;
+    item.data := p;
+    item.next := other_thread_free_lists;
+    other_thread_free_lists := item;
+    spin_unlock(@lock);
+  end else
+    result := -1;
 end;
 
 procedure TThreadMemory.do_freemem_from_other_thread;
@@ -1774,35 +1780,40 @@ end;
 { TMemManager }
 
 var
-  mem_mgr: TMemManager;
+  is_local_mm_set: Boolean;
+  mem_mgr: PMemManager;
+  local_mem_mgr: TMemManager;
 
 threadvar
   local_thread_memory: PThreadMemory;
 
 {$ifdef has_thread_exit}
 var
+  on_sys_exit_proc: TSystemThreadEndProc;
   prev_end_thread: procedure(code: Integer);
 
-procedure qmm_end_thread(code: Integer);
+procedure qmm_sys_thread_exit(code: Integer);
 begin
   mem_mgr.release_thread_memory(GetCurrentThreadId);
-  if assigned(prev_end_thread) then
+  if @prev_end_thread <> nil then
     prev_end_thread(code);
 end;
 
 {$else}
 
 var
+  on_api_exit_proc: Pointer;
+  on_sys_exit_proc: Pointer;
   old_api_thread_exit: TJump;
   old_sys_thread_exit: TJump;
 
-procedure api_thread_exit(code: Integer); stdcall;
+procedure qmm_api_thread_exit(code: Integer); stdcall;
 begin
   mem_mgr.release_thread_memory(GetCurrentThreadId);
   // nothing to do
 end;
 
-procedure sys_thread_exit(code: Integer);
+procedure qmm_sys_thread_exit(code: Integer);
 begin
   mem_mgr.release_thread_memory(GetCurrentThreadId);
   // nothing to do
@@ -1852,15 +1863,6 @@ begin
   spin_init(@block_lock, 64);
   spin_init(@leak_lock, 32);
   spin_init(@items_block_lock, 32);
-
-{$ifndef has_thread_exit}
-  _replace_function(@Windows.ExitThread, @api_thread_exit, old_api_thread_exit);
-  _replace_function(@System.EndThread, @sys_thread_exit, old_sys_thread_exit);
-{$else}
-  prev_end_thread := SystemThreadEndProc;
-  SystemThreadEndProc := qmm_end_thread;
-{$endif}
-
   main_mgr := create_thread_memory();
 end;
 
@@ -1914,13 +1916,6 @@ begin
       system.error(reInvalidPtr);
     link_buffer := next;
   end;
-{$ifndef has_thread_exit}
-  _restore_function(@Windows.ExitThread, old_api_thread_exit);
-  _restore_function(@System.EndThread, old_sys_thread_exit);
-{$else}
-  SystemThreadEndProc := prev_end_thread;
-{$endif}
-
   spin_uninit(@lock);
   spin_uninit(@block_lock);
   spin_uninit(@leak_lock);
@@ -2121,6 +2116,10 @@ begin
   if not initialized then exit;
 
   result := pop_thread_memory;
+  local_thread_memory := result;
+{$ifdef qmm_debug}
+  mprint('QMM[%u]::create thread memory: thread=%p, tid=%d', [HInstance, result, GetCurrentThreadId()]);
+{$endif}
   if not result.initialized then
   begin
     spin_lock(@items_block_lock);
@@ -2132,7 +2131,6 @@ begin
     result.initialize(@self, mini_block, small_block);
   end;
   result.reactive(GetCurrentThreadId);
-  local_thread_memory := result;
 
   spin_lock(@lock);
   result.prev_thread_memory := nil;
@@ -2150,9 +2148,12 @@ var
   thread: PThreadMemory;
 begin
   thread := local_thread_memory;
-  if not initialized or (thread = nil) then exit;
   local_thread_memory := nil;
-
+{$ifdef qmm_debug}
+  mprint('QMM[%u]::release thread memory: initialized=%d, thread=%p, tid=%d', [
+    HInstance, Integer(initialized), thread, GetCurrentThreadId()]);
+{$endif}
+  if not initialized or (thread = nil) then exit;
   thread.deactive();
 
   spin_lock(@lock);
@@ -2487,7 +2488,7 @@ begin
   mem.last_tag := Pointer(MADDR(mem) + sizeof(TDebugMem) + size);
   debug_set_mem_last_tag(mem.last_tag);
   result := MADDR(mem) + sizeof(TDebugMem);
-  if assigned(on_notify_get_proc) then
+  if @on_notify_get_proc <> nil then
     on_notify_get_proc(result, size);
 end;
 
@@ -2500,15 +2501,17 @@ end;
 
 function debug_memory_check(op: TDebugMemOP; mem: PDebugMem): Boolean;
 begin
-  result := (mem = nil) or ((mem.first_tag = MEM_FILLER) and
+  result := (mem <> nil) and (mem.first_tag = MEM_FILLER) and
     (MADDR(mem.last_tag) = MADDR(mem) + sizeof(TDebugMem) + mem.ori_size) and
-    cmp_mem(mem.last_tag, @mem_cmp_datas[0], suffix_mem_check));
+    cmp_mem(mem.last_tag, @mem_cmp_datas[0], suffix_mem_check);
   if not result then
   begin
-    if not assigned(on_memory_error_proc) then
+    if @on_memory_error_proc = nil then
     begin
-      if int3_when_memory_error then
+    {$warn symbol_platform off}
+      if (System.DebugHook > 0) and int3_when_memory_error then
         assert(false);
+    {$warn symbol_platform on}
     end else
       on_memory_error_proc(op, MADDR(mem) + sizeof(TDebugMem), mem.ori_size);
   end;
@@ -2537,7 +2540,7 @@ begin
   new_mem.last_tag := Pointer(MADDR(new_mem)+ sizeof(TDebugMem) + size);
   debug_set_mem_last_tag(new_mem.last_tag);
   result := MADDR(new_mem) + sizeof(TDebugMem);
-  if assigned(on_notify_realloc_proc) then
+  if @on_notify_realloc_proc <> nil then
     on_notify_realloc_proc(p, ori_size, result, size);
 end;
 
@@ -2548,10 +2551,14 @@ var
 begin
   mem := Pointer(MADDR(p) - sizeof(TDebugMem));
   debug_memory_check(opFree, mem);
-  size := mem.ori_size;
-  result := memory_free(mem);
-  if assigned(on_notify_free_proc) then
+  if @on_notify_free_proc = nil then
+    result := memory_free(mem)
+  else
+  begin
+    size := mem.ori_size;
+    result := memory_free(mem);
     on_notify_free_proc(p, size, result);
+  end;
 end;
 {$endif}
 
@@ -3029,25 +3036,13 @@ var
     end;
   end;
 
-var
-  SI: TSystemTime;
-  thread_memory: PThreadMemory;
-  buffer: array [0..MAX_PATH - 1] of AnsiChar;
-begin
-  log_file := 0;
-  is_log_start := false;
-  is_log_threadid := false;
-  last_thread_id := 0;
-  curr_thread_id := 0;
-  try
-    log_val := 0;
-    log_len := sizeof(log_buf);
-
-    thread_memory := mem_mgr.mem_mgrs;
+  procedure do_report_thread_memory(thread_memory: PThreadMemory; next_memory_offset: MSIZE);
+  begin
     while thread_memory <> nil do
     begin
       if thread_memory.initialized then
       begin
+        thread_memory.do_freemem_from_other_thread();
         if last_thread_id <> thread_memory.thread_id then
         begin
           leak_index := 0;
@@ -3068,9 +3063,36 @@ begin
           report_format('--------------------------------------------------------------------------------', []);
         end;
       end;
-      thread_memory := thread_memory.next_thread_memory;
+      //next_thread_memory
+      thread_memory := PPointer(MSIZE(thread_memory) + next_memory_offset)^;
+    end;
+  end;
+
+var
+  SI: TSystemTime;
+  next_memory_offset: Cardinal;
+  buffer: array [0..MAX_PATH - 1] of AnsiChar;
+begin
+  log_file := 0;
+  is_log_start := false;
+  is_log_threadid := false;
+  last_thread_id := 0;
+  curr_thread_id := 0;
+  try
+    log_val := 0;
+    log_len := sizeof(log_buf);
+
+    if mem_mgr.mem_idle <> nil then
+    begin
+      next_memory_offset := MSIZE(@mem_mgr.mem_idle.link_next_thread) - MSIZE(mem_mgr.mem_idle);
+      do_report_thread_memory(mem_mgr.mem_idle, next_memory_offset);
     end;
 
+    if mem_mgr.mem_mgrs <> nil then
+    begin
+      next_memory_offset := MSIZE(@mem_mgr.mem_idle.next_thread_memory) - MSIZE(mem_mgr.mem_idle);
+      do_report_thread_memory(mem_mgr.mem_mgrs, next_memory_offset);
+    end;
 
     if is_log_start then
     begin
@@ -3095,74 +3117,122 @@ type
   PMM = ^TMM;
   TMM = System.{$ifdef has_mm_ex} TMemoryManagerEx {$else} TMemoryManager {$endif};
 
-var
-  old_mm, new_mm: TMM;
-
-  is_qmm_set: Boolean = false;
-  share_map_handle: THandle = 0;
-
-//
-//code from FastMM4
-//
-type
-  PShareMessage = ^TShareMessage;
-  TShareMessage = packed record
-    mm_size: Cardinal;
-    mm: Pointer;
+  PShareMemMgrData = ^TShareMemMgrData;
+  TShareMemMgrData = packed record
+    size: Cardinal;
+    addr_mem_mgr: Pointer;
+    addr_mm: Pointer;
+  {$ifndef has_thread_exit}
+    api_exit_proc: Pointer;
+    sys_exit_proc: Pointer;
+  {$else}
+    sys_exit_proc: TSystemThreadEndProc;
+  {$endif}
+    ref_mm: Integer;
   end;
 
-procedure do_share_memmgr(var mm: TMM);
+var
+  old_mm, new_mm: TMM;
+  is_qmm_set: Boolean = false;
+  share_map_handle: THandle = 0;
+  share_mem_mgr_data: PShareMemMgrData = nil;
+
+procedure install_qmm_manager();
 var
   pid: Cardinal;
-  share: PShareMessage;
-{$ifdef debug}
-  out_string,
-{$endif}
   share_name: array [0..63] of AnsiChar;
 begin
+  // default = true
+  is_local_mm_set := true;
   pid := GetCurrentProcessId;
   fillchar(share_name, sizeof(share_name), #0);
   wvsprintfA(share_name, 'share_qiu_mm_pid_%.8x', @pid);
-  share_map_handle := OpenFileMappingA(FILE_MAP_READ, false, share_name);
+  share_map_handle := OpenFileMappingA(FILE_MAP_READ or FILE_MAP_WRITE, false, share_name);
+{$ifndef has_thread_exit}
+  on_api_exit_proc := @qmm_api_thread_exit;
+{$endif}
+  on_sys_exit_proc := @qmm_sys_thread_exit;
   if share_map_handle = 0 then
   begin
     if not system.IsLibrary then
     begin
       share_map_handle := CreateFileMappingA(INVALID_HANDLE_VALUE, nil,
-        PAGE_READWRITE, 0, sizeof(TShareMessage), share_name);
-      share := MapViewOfFile(share_map_handle, FILE_MAP_WRITE, 0, 0, 0);
-      share.mm_size := sizeof(TMM);
-      share.mm := @mm;
-      UnmapViewOfFile(share);
+        PAGE_READWRITE, 0, sizeof(TShareMemMgrData), share_name);
+      share_mem_mgr_data := MapViewOfFile(share_map_handle, FILE_MAP_READ or FILE_MAP_WRITE, 0, 0, 0);
+      share_mem_mgr_data.size := sizeof(TShareMemMgrData);
+      share_mem_mgr_data.addr_mem_mgr := @local_mem_mgr;
+      share_mem_mgr_data.addr_mm := @new_mm;
+    {$ifndef has_thread_exit}
+      share_mem_mgr_data.api_exit_proc := on_api_exit_proc;
+    {$endif}
+      share_mem_mgr_data.sys_exit_proc := on_sys_exit_proc;
+      share_mem_mgr_data.ref_mm := 1;
     {$ifdef debug}
-      OutputDebugStringA('create share memory manager succed');
+      mprint('QMM[%u]::create share memory manager succed', [HInstance]);
     {$endif}
     end else
     begin
     {$ifdef debug}
-      OutputDebugStringA('DLL: cann''t open share map');
+      mprint('QMM[%u]::DLL: cann''t open share map', [HInstance]);
     {$endif}
     end;
   end else
   begin
-    share := MapViewOfFile(share_map_handle, FILE_MAP_READ, 0, 0, 0);
-    if share.mm_size = sizeof(TMM) then
+    share_mem_mgr_data := MapViewOfFile(share_map_handle, FILE_MAP_READ or FILE_MAP_WRITE, 0, 0, 0);
+    if share_mem_mgr_data.size = sizeof(TShareMemMgrData) then
     begin
-      mm := PMM(share.mm)^;
+      is_local_mm_set := false;
+      new_mm := PMM(share_mem_mgr_data.addr_mm)^;
+      mem_mgr := share_mem_mgr_data.addr_mem_mgr;
+    {$ifndef has_thread_exit}
+      on_api_exit_proc := share_mem_mgr_data.api_exit_proc;
+    {$endif}
+      on_sys_exit_proc := share_mem_mgr_data.sys_exit_proc;
+      inc(share_mem_mgr_data.ref_mm);
     {$ifdef debug}
-      OutputDebugStringA('read share memory manager succed');
+      mprint('QMM[%u]::read share memory manager succed', [HInstance]);
     {$endif}
     end else
     begin
-    {$ifdef debug}
-      wvsprintfA(out_string, 'share mm fail: mm_size: %d <> sizeof(TMM)', @share.mm_size);
-      OutputDebugStringA(out_string);
+    {$ifdef qmm_debug}
+      mprint('QMM[%u]::share mm fail: mm_size: %d <> sizeof(TShareMemMgrData)', [HInstance, share_mem_mgr_data.size]);
     {$endif}
     end;
-    UnmapViewOfFile(share);
-    CloseHandle(share_map_handle);
-    share_map_handle := 0;
   end;
+
+  if is_local_mm_set then
+  begin
+    new_mm.GetMem := @{$ifndef debug}memory_get{$else}debug_memory_get{$endif};
+    new_mm.FreeMem := @{$ifndef debug}memory_free{$else}debug_memory_free{$endif};
+    new_mm.ReallocMem := @{$ifndef debug}memory_realloc{$else}debug_memory_realloc{$endif};
+  {$ifdef has_mm_ex}
+    new_mm.AllocMem := @{$ifndef debug}memory_alloc{$else}debug_memory_alloc{$endif};
+    new_mm.RegisterExpectedMemoryLeak := @memory_register_leak;
+    new_mm.UnRegisterExpectedMemoryLeak := @memory_unregister_leak;
+  {$endif}
+    mem_mgr := @local_mem_mgr;
+  {$ifdef debug}
+    mprint('QMM[%u]::call mem_mgr initialize', [HInstance]);
+  {$endif}
+    local_mem_mgr.initialize();
+  end else
+  begin
+  {$ifopt c+}
+    assert(mem_mgr <> nil);
+  {$endif}
+  end;
+
+{$ifndef has_thread_exit}
+  _replace_function(@Windows.ExitThread, on_api_exit_proc, old_api_thread_exit);
+  _replace_function(@System.EndThread, on_sys_exit_proc, old_sys_thread_exit);
+{$else}
+  prev_end_thread := SystemThreadEndProc;
+  SystemThreadEndProc := on_sys_exit_proc;
+{$endif}
+
+  GetMemoryManager(old_mm);
+  SetMemoryManager(new_mm);
+  is_qmm_set := true;
 end;
 
 procedure initialize_memory_manager;
@@ -3192,35 +3262,24 @@ procedure initialize_memory_manager;
 var
   SI: TSystemInfo;
 begin
-  if is_qmm_set then exit;
+{$ifdef debug}
+  assert(suffix_mem_check and (sizeof(Pointer) - 1) = 0);
+  init_cmp_datas();
+{$endif}
+
+  if (is_qmm_set) or (IsMemoryManagerSet) or (get_allocated_size() > 0) then
+    exit;
 
   GetSystemInfo(SI);
   cMinAllocSize := SI.dwAllocationGranularity;
-
-  mem_mgr.initialize;
-  new_mm.GetMem := @{$ifndef debug}memory_get{$else}debug_memory_get{$endif};
-  new_mm.FreeMem := @{$ifndef debug}memory_free{$else}debug_memory_free{$endif};
-  new_mm.ReallocMem := @{$ifndef debug}memory_realloc{$else}debug_memory_realloc{$endif};
-{$ifdef has_mm_ex}
-  new_mm.AllocMem := @{$ifndef debug}memory_alloc{$else}debug_memory_alloc{$endif};
-  new_mm.RegisterExpectedMemoryLeak := @memory_register_leak;
-  new_mm.UnRegisterExpectedMemoryLeak := @memory_unregister_leak;
-{$endif}
-
-  do_share_memmgr(new_mm);
-
-  if (is_qmm_set) or (System.IsMemoryManagerSet) or
-    (get_allocated_size() > 0) then
-    exit;
-
-  GetMemoryManager(old_mm);
-  SetMemoryManager(new_mm);
-  is_qmm_set := true;
+  install_qmm_manager();
 end;
 
 procedure finalize_memory_manager;
+var
+  ref_mm_count: Integer;
 begin
-  if ReportMemoryLeaksOnShutdown then
+  if is_local_mm_set and ReportMemoryLeaksOnShutdown then
     report_memory_leak_to_file();
 
   if is_qmm_set then
@@ -3229,21 +3288,52 @@ begin
     is_qmm_set := false;
   end;
 
+  ref_mm_count := 0;
+  if share_mem_mgr_data <> nil then
+  begin
+    dec(share_mem_mgr_data.ref_mm);
+    ref_mm_count := share_mem_mgr_data.ref_mm;
+    UnmapViewOfFile(share_mem_mgr_data);
+    share_mem_mgr_data := nil;
+  end;
+
   if share_map_handle <> 0 then
   begin
     CloseHandle(share_map_handle);
     share_map_handle := 0;
   end;
-  mem_mgr.uninitialize;
+
+  if ref_mm_count <= 0 then
+  begin
+  {$ifdef debug}
+    mprint('QMM[%u]::start::call mem_mgr.uninitialize()', [HInstance]);
+  {$endif}
+    mem_mgr.uninitialize();
+  {$ifdef debug}
+    mprint('QMM[%u]::end::call mem_mgr.uninitialize', [HInstance]);
+  {$endif}
+  end
+{$ifdef debug}
+  else
+  if is_local_mm_set then
+  begin
+    mprint('QMM[%u]::cann''t call mem_mgr.uninitailize:DLL share QMM references:%d', [HInstance, ref_mm_count]);
+  end
+{$endif}
+  ;
+
+{$ifndef has_thread_exit}
+  _restore_function(@Windows.ExitThread, old_api_thread_exit);
+  _restore_function(@System.EndThread, old_sys_thread_exit);
+{$else}
+  SystemThreadEndProc := prev_end_thread;
+{$endif}
 end;
 
 initialization
-{$ifdef debug}
-  assert(suffix_mem_check and (sizeof(Pointer) - 1) = 0);
-  init_cmp_datas();
-{$endif}
-  initialize_memory_manager;
+  initialize_memory_manager();
 finalization
-  finalize_memory_manager;
+  finalize_memory_manager();
 
 end.
+
