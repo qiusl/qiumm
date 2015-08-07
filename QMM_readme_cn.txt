@@ -1,5 +1,5 @@
 ﻿
-QIU Memory Manager 1.13 for Delphi
+QIU Memory Manager 1.14 for Delphi
 简称：QMM
 
 描述:
